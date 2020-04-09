@@ -64,7 +64,7 @@ fn show_error_message(title: &str, message: &str) {
 /// Basis structures initialization
 fn init() -> Result<(Logger, EventLoop<()>, Window, Sender<Input>), InitError> {
     let mut save_path = default_settings_path()?;
-    save_path.push("HexFieldPlayground");
+    save_path.push("InfrastructurePrototype");
 
     // Init logger
     let logger = init_logger(save_path)?;
@@ -90,7 +90,7 @@ fn init() -> Result<(Logger, EventLoop<()>, Window, Sender<Input>), InitError> {
 /// Window initialization
 fn init_window(event_loop: &EventLoop<()>) -> Result<Window, OsError> {
     let window_builder = WindowBuilder::default()
-        .with_title("HexFieldPlayground")
+        .with_title("InfrastructurePrototype")
         .with_inner_size(PhysicalSize::new(800, 600));
     let window = window_builder.build(&event_loop)?;
     Ok(window)
