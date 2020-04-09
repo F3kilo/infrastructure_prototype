@@ -23,6 +23,7 @@ use winit::error::OsError;
 
 use crate::input::Input;
 use crate::input_logger::InputLogger;
+use crate::utils::show_error_message;
 use std::convert::TryInto;
 use std::sync::mpsc::{channel, Sender};
 use winit::event::{Event, WindowEvent};
@@ -55,10 +56,6 @@ fn main() {
             *control_flow = ControlFlow::Exit;
         }
     });
-}
-
-fn show_error_message(title: &str, message: &str) {
-    message_box_ok(title, message, MessageBoxIcon::Error);
 }
 
 /// Basis structures initialization
