@@ -122,44 +122,40 @@ impl<M: Model> ModelManager<M> {
         self.input_rx.try_iter().collect()
     }
 
-    fn before_present(&mut self) -> Result<(), ModelNotFreeError> {
+    fn before_present(&mut self, prior_result: Option<M::PriorResult>) -> Result<Option<M::PriorResult>, ModelNotFreeError> {
         trace!(self.logger, "Before present updating start");
         let input_events = self.take_input_events();
         trace!(self.logger, "Got {:?} input events", input_events.len());
         let model = self.wait_for_mut_model()?;
-        model.before_present(input_events.into_iter());
-        Ok(())
+        Ok(model.update(prior_result, input_events.into_iter()))
     }
 
-    fn while_present(&self) {
+    fn while_present(&self, prior_result: Option<M::PriorResult>) -> Option<M::PriorResult> {
         trace!(self.logger, "While present calculations start");
-        self.model.while_present();
+        self.model.prior(prior_result)
     }
 
-    fn after_present(&mut self) -> Result<(), ModelNotFreeError> {
-        trace!(self.logger, "After present updating start");
-        let model = self.wait_for_mut_model()?;
-        model.after_present();
-        Ok(())
-    }
+    fn update(
+        &mut self,
+        prior_result: Option<M::PriorResult>,
+    ) -> Result<Option<M::PriorResult>, UpdateError> {
+        let prior_result = self.while_present(prior_result);
+        trace!(self.logger, "While present calculations done");
 
-    fn update(&mut self) -> Result<(), UpdateError> {
-        self.before_present()?;
+        let prior_result = self.before_present(prior_result)?;
         trace!(
             self.logger,
             "Before present updating done. Sending Arc clone..."
         );
         self.model_tx.send(self.model.clone())?;
         trace!(self.logger, "Arc clone sent");
-        self.while_present();
-        trace!(self.logger, "While present updating done");
-        self.after_present()?;
-        trace!(self.logger, "After present updating done");
-        Ok(())
+
+        Ok(prior_result)
     }
 
     pub fn run(mut self) {
         trace!(self.logger, "Starting model manager loop");
+        let mut prior_result = None;
         loop {
             self.state = self.interpret_commands();
             trace!(self.logger, "New state is: {:?}", self.state);
@@ -167,12 +163,13 @@ impl<M: Model> ModelManager<M> {
             match self.state {
                 State::Running => {
                     trace!(self.logger, "State::Running: Start updating model");
-                    self.update().unwrap_or_else(|e| {
+                    prior_result = self.update(prior_result).unwrap_or_else(|e| {
                         error!(self.logger, "Update error: {}", e);
                         trace!(self.logger, "Stop model manager loop");
                         self.state = State::Stoped;
                         trace!(self.logger, "Sending error");
                         self.send_error(e.into());
+                        None
                     });
                 }
                 State::Stoped => {

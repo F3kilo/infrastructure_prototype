@@ -37,7 +37,13 @@ impl CounterModel {
 }
 
 impl Model for CounterModel {
-    fn before_present(&mut self, inputs: impl Iterator<Item = Input>) {
+    type PriorResult = ();
+
+    fn prior(&self, _: Option<Self::PriorResult>) -> Option<Self::PriorResult> {
+        None
+    }
+
+    fn update(&mut self, _: Option<Self::PriorResult>, inputs: impl Iterator<Item=Input>) -> Option<Self::PriorResult> {
         for input in inputs {
             if let InputEvent::Keyboard { key, state } = input.event() {
                 if *key == VirtualKeyCode::Up {
@@ -48,9 +54,6 @@ impl Model for CounterModel {
                 }
             }
         }
+        None
     }
-
-    fn while_present(&self) {}
-
-    fn after_present(&mut self) {}
 }

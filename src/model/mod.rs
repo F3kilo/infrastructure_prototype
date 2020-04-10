@@ -5,7 +5,12 @@ pub mod error;
 pub mod model_manager;
 
 pub trait Model {
-    fn before_present(&mut self, inputs: impl Iterator<Item = Input>);
-    fn while_present(&self);
-    fn after_present(&mut self);
+    type PriorResult: Sized;
+
+    fn prior(&self, prior_result: Option<Self::PriorResult>) -> Option<Self::PriorResult>;
+    fn update(
+        &mut self,
+        prior_result: Option<Self::PriorResult>,
+        inputs: impl Iterator<Item = Input>,
+    ) -> Option<Self::PriorResult>;
 }

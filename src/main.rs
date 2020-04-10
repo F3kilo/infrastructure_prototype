@@ -24,13 +24,13 @@ use winit::error::OsError;
 
 use crate::input::Input;
 use crate::model::counter_model::CounterModel;
-use crate::model::model_manager::{ModelManager, Command};
+use crate::model::model_manager::{Command, ModelManager};
 use crate::utils::show_error_message;
 use std::convert::TryInto;
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
-use winit::event::{Event, WindowEvent};
 use std::time::Duration;
+use winit::event::{Event, WindowEvent};
 
 fn main() {
     let (logger, event_loop, _window, input_tx, model_rx) = init().unwrap_or_else(|e| {
@@ -39,13 +39,11 @@ fn main() {
         panic!(message);
     });
 
-    std::thread::spawn(move || {
-       loop {
-           if let Ok(model) = model_rx.try_recv() {
-               println!("Got model. Count: {:?}", model.count());
-           }
-           std::thread::sleep(Duration::from_millis(16));
-       }
+    std::thread::spawn(move || loop {
+        if let Ok(model) = model_rx.try_recv() {
+            println!("Got model. Count: {:?}", model.count());
+        }
+        std::thread::sleep(Duration::from_millis(16));
     });
 
     info!(logger, "Initialization done");
@@ -72,7 +70,16 @@ fn main() {
 }
 
 /// Basis structures initialization
-fn init() -> Result<(Logger, EventLoop<()>, Window, Sender<Input>, Receiver<Arc<CounterModel>>), InitError> {
+fn init() -> Result<
+    (
+        Logger,
+        EventLoop<()>,
+        Window,
+        Sender<Input>,
+        Receiver<Arc<CounterModel>>,
+    ),
+    InitError,
+> {
     let mut save_path = default_settings_path()?;
     save_path.push("InfrastructurePrototype");
 
