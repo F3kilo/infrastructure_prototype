@@ -1,6 +1,6 @@
-use super::Model;
 use crate::input::{Input, InputEvent};
 use winit::event::{ElementState, VirtualKeyCode};
+use super::{State, Model};
 
 pub struct CounterModel {
     counter: i32,
@@ -39,11 +39,15 @@ impl CounterModel {
 impl Model for CounterModel {
     type PriorResult = ();
 
-    fn prior(&self, _: Option<Self::PriorResult>) -> Option<Self::PriorResult> {
-        None
+    fn prior(&self, _: Option<Self::PriorResult>) -> State<Self::PriorResult> {
+        State::Running(None)
     }
 
-    fn update(&mut self, _: Option<Self::PriorResult>, inputs: impl Iterator<Item=Input>) -> Option<Self::PriorResult> {
+    fn update(
+        &mut self,
+        _: Option<Self::PriorResult>,
+        inputs: impl Iterator<Item = Input>,
+    ) -> State<Self::PriorResult> {
         for input in inputs {
             if let InputEvent::Keyboard { key, state } = input.event() {
                 if *key == VirtualKeyCode::Up {
@@ -54,6 +58,6 @@ impl Model for CounterModel {
                 }
             }
         }
-        None
+        State::Running(None)
     }
 }

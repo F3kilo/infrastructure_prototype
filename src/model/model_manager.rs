@@ -10,18 +10,24 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Commands from outer code.
 #[derive(Debug)]
 pub enum Command {
+    /// Stop model updating loop and wait for next commands.
     Stop,
+    /// Run model updating loop.
     Run,
+    /// Exit from model updating loop.
     Exit,
 }
 
+/// Notifications to outer code
 #[derive(Debug)]
 pub enum Notification {
     Error(ModelManagerError),
 }
 
+/// Current model updating loop state
 #[derive(Debug)]
 enum State {
     Running,
@@ -29,55 +35,74 @@ enum State {
     Exitting,
 }
 
+/// Manager, that controll model by calling it's trait methods in correct order, at correct time.
 #[derive(Debug)]
-struct ServiceChannel {
-    command_rx: Receiver<Command>,
-    notifications_tx: Sender<Notification>,
-}
-
-#[derive(Debug)]
-pub struct ModelManager<Model> {
-    model: Arc<Model>,
-    input_rx: Receiver<Input>,
+pub struct ModelManager<M> {
+    model: Arc<M>,
+    inner_bonds: InnerBonds<M>,
     state: State,
-    commands_rx: Receiver<Command>,
-    notifications_tx: Sender<Notification>,
-    model_tx: Sender<Arc<Model>>,
     logger: Logger,
 }
 
+/// Outer code communicate with ModelManager using this.
+#[derive(Debug)]
+pub struct OuterBonds<M> {
+    pub input_tx: Sender<Input>,
+    pub command_tx: Sender<Command>,
+    pub notification_rx: Receiver<Notification>,
+    pub model_rx: Receiver<Arc<M>>,
+}
+
+/// ModelManager communicate with outer code using this.
+#[derive(Debug)]
+struct InnerBonds<M> {
+    input_rx: Receiver<Input>,
+    command_rx: Receiver<Command>,
+    notification_tx: Sender<Notification>,
+    model_tx: Sender<Arc<M>>,
+}
+
 impl<M: Model> ModelManager<M> {
-    pub fn new(
-        model: Arc<M>,
-        logger: Logger,
-    ) -> (
-        Self,
-        Sender<Input>,
-        Sender<Command>,
-        Receiver<Notification>,
-        Receiver<Arc<M>>,
-    ) {
-        let (commands_tx, commands_rx) = channel();
-        let (notifications_tx, notifications_rx) = channel();
+    pub fn new(model: Arc<M>, logger: Logger) -> (Self, OuterBonds<M>) {
+        let (outer_bonds, inner_bonds) = <ModelManager<M>>::create_bonds();
+
+        trace!(logger, "Creating model manager");
+        let model_manager = Self {
+            model,
+            inner_bonds,
+            state: State::Stoped,
+            logger,
+        };
+        (model_manager, outer_bonds)
+    }
+
+    /// Creates inner and outer parts of communication tools
+    fn create_bonds() -> (OuterBonds<M>, InnerBonds<M>) {
+        let (command_tx, command_rx) = channel();
+        let (notification_tx, notification_rx) = channel();
         let (input_tx, input_rx) = channel();
         let (model_tx, model_rx) = channel();
 
-        trace!(logger, "Creating model manager");
-        let s = Self {
-            model,
-            input_rx,
-            state: State::Stoped,
-            commands_rx,
-            notifications_tx,
-            model_tx,
-            logger,
+        let outer_bonds = OuterBonds {
+            input_tx,
+            command_tx,
+            notification_rx,
+            model_rx,
         };
-        (s, input_tx, commands_tx, notifications_rx, model_rx)
+
+        let inner_bonds = InnerBonds {
+            input_rx,
+            command_rx,
+            notification_tx,
+            model_tx,
+        };
+        (outer_bonds, inner_bonds)
     }
 
+    /// Interpret recieved commands and return state required by them.
     fn interpret_commands(&self) -> State {
         let mut state = State::Running;
-        for command in self.commands_rx.try_iter() {
+        for command in self.inner_bonds.command_rx.try_iter() {
             trace!(self.logger, "Got command: {:?}", command);
             match command {
                 Command::Stop => state = State::Stoped,
@@ -88,6 +113,8 @@ impl<M: Model> ModelManager<M> {
         state
     }
 
+    /// Tries to get mutable reference from Arc to model.
+    /// If count of strong references in that Arc is bigger than 1, then returns ModelNotFreeError::ArcGetMutFailed.
     fn try_get_mut_model(&mut self) -> Result<&mut M, ModelNotFreeError> {
         debug!(
             self.logger,
@@ -103,6 +130,9 @@ impl<M: Model> ModelManager<M> {
         }
     }
 
+    /// Waits for strong reference count in Arc to model equals to 1.
+    /// Return ModelNotFreeError::WaitTimeoutExceeded if wait time more than timeout.
+    /// Return ModelNotFreeError::ArcGetMutFailed if whatever can't get mut reference by some reason.
     fn wait_for_mut_model(&mut self) -> Result<&mut M, ModelNotFreeError> {
         trace!(self.logger, "Start wait for &mut Model");
         let wait_result = wait_for(
@@ -118,11 +148,16 @@ impl<M: Model> ModelManager<M> {
         Err(ModelNotFreeError::WaitTimeoutExceeded)
     }
 
+    /// Clone recieved events into Vec.
     fn take_input_events(&mut self) -> Vec<Input> {
-        self.input_rx.try_iter().collect()
+        self.inner_bonds.input_rx.try_iter().collect()
     }
 
-    fn before_present(&mut self, prior_result: Option<M::PriorResult>) -> Result<Option<M::PriorResult>, ModelNotFreeError> {
+    /// Updates model before send to presenter.
+    fn before_present(
+        &mut self,
+        prior_result: Option<M::PriorResult>,
+    ) -> Result<Option<M::PriorResult>, ModelNotFreeError> {
         trace!(self.logger, "Before present updating start");
         let input_events = self.take_input_events();
         trace!(self.logger, "Got {:?} input events", input_events.len());
@@ -130,11 +165,13 @@ impl<M: Model> ModelManager<M> {
         Ok(model.update(prior_result, input_events.into_iter()))
     }
 
+    /// Makes some calculations in model while it is shared with presenter.
     fn while_present(&self, prior_result: Option<M::PriorResult>) -> Option<M::PriorResult> {
         trace!(self.logger, "While present calculations start");
         self.model.prior(prior_result)
     }
 
+    /// Updates model and sends it to presenter
     fn update(
         &mut self,
         prior_result: Option<M::PriorResult>,
@@ -147,7 +184,7 @@ impl<M: Model> ModelManager<M> {
             self.logger,
             "Before present updating done. Sending Arc clone..."
         );
-        self.model_tx.send(self.model.clone())?;
+        self.inner_bonds.model_tx.send(self.model.clone())?;
         trace!(self.logger, "Arc clone sent");
 
         Ok(prior_result)
@@ -186,7 +223,7 @@ impl<M: Model> ModelManager<M> {
 
     fn wait_for_next_commands(&mut self) {
         trace!(self.logger, "Start waiting for commands");
-        let command = self.commands_rx.recv();
+        let command = self.inner_bonds.command_rx.recv();
         match command {
             Ok(c) => {
                 trace!(self.logger, "Command recieved: {:?}", c);
@@ -205,7 +242,8 @@ impl<M: Model> ModelManager<M> {
 
     fn send_error(&mut self, e: ModelManagerError) {
         trace!(self.logger, "Sending error: {}", e);
-        self.notifications_tx
+        self.inner_bonds
+            .notification_tx
             .send(Notification::Error(e))
             .unwrap_or_else(|e| {
                 let error_message = format!("Can't send notification to main: {}", e);

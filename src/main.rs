@@ -22,23 +22,27 @@ use error::log_init::LogInitError;
 use sloggers::types::Severity;
 use winit::error::OsError;
 
-use crate::input::Input;
 use crate::model::counter_model::CounterModel;
-use crate::model::model_manager::{Command, ModelManager};
+use crate::model::model_manager::{Command, ModelManager, OuterBonds};
 use crate::utils::show_error_message;
 use std::convert::TryInto;
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 use winit::event::{Event, WindowEvent};
 
 fn main() {
-    let (logger, event_loop, _window, input_tx, model_rx) = init().unwrap_or_else(|e| {
+    let (logger, event_loop, _window, mm_bonds) = init().unwrap_or_else(|e| {
         let message = format!("Initialization error occurred: {}", e);
         show_error_message("Initialization error", message.as_str());
         panic!(message);
     });
 
+    let (input_tx, _command_tx, _notification_rx, model_rx) = (
+        mm_bonds.input_tx,
+        mm_bonds.command_tx,
+        mm_bonds.notification_rx,
+        mm_bonds.model_rx,
+    );
     std::thread::spawn(move || loop {
         if let Ok(model) = model_rx.try_recv() {
             println!("Got model. Count: {:?}", model.count());
@@ -70,16 +74,7 @@ fn main() {
 }
 
 /// Basis structures initialization
-fn init() -> Result<
-    (
-        Logger,
-        EventLoop<()>,
-        Window,
-        Sender<Input>,
-        Receiver<Arc<CounterModel>>,
-    ),
-    InitError,
-> {
+fn init() -> Result<(Logger, EventLoop<()>, Window, OuterBonds<CounterModel>), InitError> {
     let mut save_path = default_settings_path()?;
     save_path.push("InfrastructurePrototype");
 
@@ -101,14 +96,12 @@ fn init() -> Result<
     // let input_logger = InputLogger::new(rx, logger.clone());
     // std::thread::spawn(|| input_logger.run());
 
-    let (model_manager, input_tx, commands_tx, _, model_rx) =
-        ModelManager::new(Arc::new(CounterModel::new()), logger.clone());
+    let (model_manager, bonds) = ModelManager::new(Arc::new(CounterModel::new()), logger.clone());
 
     std::thread::spawn(|| model_manager.run());
+    bonds.command_tx.send(Command::Run).unwrap();
 
-    commands_tx.send(Command::Run).unwrap();
-
-    Ok((logger, event_loop, window, input_tx, model_rx))
+    Ok((logger, event_loop, window, bonds))
 }
 
 /// Window initialization
