@@ -1,5 +1,6 @@
 use crate::input::Input;
 
+pub mod counter_model;
 pub mod error;
 pub mod model_manager;
 

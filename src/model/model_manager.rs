@@ -1,25 +1,24 @@
-
 use crate::input::Input;
 use crate::model::error::model_not_free::ModelNotFreeError;
 use crate::model::error::update::UpdateError;
 use crate::model::error::ModelManagerError;
+use crate::model::Model;
 use crate::utils;
 use crate::utils::wait_for;
-use slog::{error, debug, trace, warn, Logger};
-use std::sync::mpsc::{Receiver, Sender};
+use slog::{debug, error, trace, warn, Logger};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
-use crate::model::Model;
 
 #[derive(Debug)]
-enum Command {
+pub enum Command {
     Stop,
     Run,
     Exit,
 }
 
 #[derive(Debug)]
-enum Notification {
+pub enum Notification {
     Error(ModelManagerError),
 }
 
@@ -31,7 +30,7 @@ enum State {
 }
 
 #[derive(Debug)]
-pub struct ServiceChannel {
+struct ServiceChannel {
     command_rx: Receiver<Command>,
     notifications_tx: Sender<Notification>,
 }
@@ -41,33 +40,44 @@ pub struct ModelManager<Model> {
     model: Arc<Model>,
     input_rx: Receiver<Input>,
     state: State,
-    service_channel: ServiceChannel,
+    commands_rx: Receiver<Command>,
+    notifications_tx: Sender<Notification>,
     model_tx: Sender<Arc<Model>>,
     logger: Logger,
 }
 
 impl<M: Model> ModelManager<M> {
     pub fn new(
-        service_channel: ServiceChannel,
-        model_tx: Sender<Arc<M>>,
-        input_rx: Receiver<Input>,
         model: Arc<M>,
         logger: Logger,
-    ) -> Self {
+    ) -> (
+        Self,
+        Sender<Input>,
+        Sender<Command>,
+        Receiver<Notification>,
+        Receiver<Arc<M>>,
+    ) {
+        let (commands_tx, commands_rx) = channel();
+        let (notifications_tx, notifications_rx) = channel();
+        let (input_tx, input_rx) = channel();
+        let (model_tx, model_rx) = channel();
+
         trace!(logger, "Creating model manager");
-        Self {
+        let s = Self {
             model,
             input_rx,
-            state: State::Running,
-            service_channel,
+            state: State::Stoped,
+            commands_rx,
+            notifications_tx,
             model_tx,
             logger,
-        }
+        };
+        (s, input_tx, commands_tx, notifications_rx, model_rx)
     }
 
     fn interpret_commands(&self) -> State {
         let mut state = State::Running;
-        for command in self.service_channel.command_rx.try_iter() {
+        for command in self.commands_rx.try_iter() {
             trace!(self.logger, "Got command: {:?}", command);
             match command {
                 Command::Stop => state = State::Stoped,
@@ -149,7 +159,6 @@ impl<M: Model> ModelManager<M> {
     }
 
     pub fn run(mut self) {
-        self.state = State::Running;
         trace!(self.logger, "Starting model manager loop");
         loop {
             self.state = self.interpret_commands();
@@ -180,7 +189,7 @@ impl<M: Model> ModelManager<M> {
 
     fn wait_for_next_commands(&mut self) {
         trace!(self.logger, "Start waiting for commands");
-        let command = self.service_channel.command_rx.recv();
+        let command = self.commands_rx.recv();
         match command {
             Ok(c) => {
                 trace!(self.logger, "Command recieved: {:?}", c);
@@ -199,8 +208,7 @@ impl<M: Model> ModelManager<M> {
 
     fn send_error(&mut self, e: ModelManagerError) {
         trace!(self.logger, "Sending error: {}", e);
-        self.service_channel
-            .notifications_tx
+        self.notifications_tx
             .send(Notification::Error(e))
             .unwrap_or_else(|e| {
                 let error_message = format!("Can't send notification to main: {}", e);

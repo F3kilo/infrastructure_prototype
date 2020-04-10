@@ -12,6 +12,20 @@ pub struct Input {
     event: InputEvent,
 }
 
+impl Input {
+    pub fn event(&self) -> &InputEvent {
+        &self.event
+    }
+
+    pub fn device_id(&self) -> &Option<DeviceId> {
+        &self.device_id
+    }
+
+    pub fn happen_at(&self) -> &Instant {
+        &self.happen_at
+    }
+}
+
 impl From<(Option<DeviceId>, InputEvent)> for Input {
     fn from(input: (Option<DeviceId>, InputEvent)) -> Self {
         Self {
