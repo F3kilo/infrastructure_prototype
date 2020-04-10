@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod error;
 mod input;
 mod input_logger;
@@ -14,7 +16,6 @@ use settings_path::*;
 use slog::{info, trace, warn, Logger};
 use sloggers::{file::FileLoggerBuilder, types::TimeZone, Build};
 use std::path::PathBuf;
-use tinyfiledialogs::*;
 
 use error::init::InitError;
 use error::log_init::LogInitError;
